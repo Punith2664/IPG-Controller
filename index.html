@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Roadbox Controller</title>
+    <style>
+        body { 
+            background-color: #222; color: white; font-family: 'Arial', sans-serif; 
+            margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center;
+            user-select: none; -webkit-user-select: none; /* Disable text selection */
+        }
+        h2 { margin-top: 20px; }
+        #status { color: #888; font-size: 14px; margin-bottom: 20px; }
+        
+        /* CONNECTION BUTTON */
+        #connectBtn {
+            padding: 12px 25px; font-size: 16px; border-radius: 8px; border: none;
+            background: #007bff; color: white; font-weight: bold; cursor: pointer;
+        }
+        
+        /* CONTROLLER LAYOUT */
+        .control-grid {
+            display: grid;
+            grid-template-columns: 100px 100px 100px;
+            grid-template-rows: 100px 100px;
+            gap: 15px;
+            margin-top: 50px;
+        }
+
+        .btn {
+            width: 100px; height: 100px;
+            border-radius: 15px; border: none;
+            font-size: 24px; font-weight: bold; color: white;
+            background: #444; box-shadow: 0 6px #222;
+            cursor: pointer;
+            display: flex; justify-content: center; align-items: center;
+            touch-action: manipulation; /* Improves touch response */
+        }
+
+        /* BUTTON COLORS & PRESS EFFECT */
+        .btn:active, .btn.pressed {
+            box-shadow: 0 2px #222;
+            transform: translateY(4px);
+            background-color: #555;
+        }
+
+        .up { background: #28a745; grid-column: 2; grid-row: 1; } /* Green */
+        .down { background: #dc3545; grid-column: 2; grid-row: 2; } /* Red */
+        .left { background: #ffc107; color: black; grid-column: 1; grid-row: 2; } /* Yellow */
+        .right { background: #ffc107; color: black; grid-column: 3; grid-row: 2; } /* Yellow */
+
+        /* LOG BOX */
+        #log {
+            margin-top: 30px; font-family: monospace; color: #0f0; font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Mission Roadbox</h2>
+    <div id="status">Disconnected</div>
+    <button id="connectBtn" onclick="connectBLE()">CONNECT ROBOT</button>
+
+    <div class="control-grid">
+        <button class="btn up" 
+            ontouchstart="sendCommand(140, 100)" onmousedown="sendCommand(140, 100)" 
+            ontouchend="stop()" onmouseup="stop()">
+            ▲
+        </button>
+
+        <button class="btn left" 
+            ontouchstart="sendCommand(100, 50)" onmousedown="sendCommand(100, 50)" 
+            ontouchend="stop()" onmouseup="stop()">
+            ◀
+        </button>
+
+        <button class="btn down" 
+            ontouchstart="sendCommand(60, 100)" onmousedown="sendCommand(60, 100)" 
+            ontouchend="stop()" onmouseup="stop()">
+            ▼
+        </button>
+
+        <button class="btn right" 
+            ontouchstart="sendCommand(100, 150)" onmousedown="sendCommand(100, 150)" 
+            ontouchend="stop()" onmouseup="stop()">
+            ▶
+        </button>
+    </div>
+
+    <div id="log">Last Cmd: Stop</div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // Must match ESP32 Code
+        const serviceUUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+        const charUUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+        let bleDevice, bleServer, bleService, bleChar;
+        let isConnected = false;
+
+        async function connectBLE() {
+            try {
+                updateStatus("Scanning...");
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'Roadbox_Controller' }],
+                    optionalServices: [serviceUUID]
+                });
+
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                updateStatus("Connecting...");
+                bleServer = await bleDevice.gatt.connect();
+                bleService = await bleServer.getPrimaryService(serviceUUID);
+                bleChar = await bleService.getCharacteristic(charUUID);
+
+                isConnected = true;
+                updateStatus("CONNECTED", "green");
+                document.getElementById('connectBtn').style.display = 'none';
+
+            } catch (error) {
+                console.log(error);
+                updateStatus("Error: " + error, "red");
+            }
+        }
+
+        function onDisconnected() {
+            isConnected = false;
+            updateStatus("Disconnected", "red");
+            document.getElementById('connectBtn').style.display = 'block';
+        }
+
+        function updateStatus(text, color="gray") {
+            const el = document.getElementById('status');
+            el.innerText = text;
+            el.style.color = color;
+        }
+
+        // --- COMMAND SENDER ---
+        async function sendCommand(throttle, steer) {
+            if (!bleChar || !isConnected) return;
+
+            // Update Log
+            let action = "Stop";
+            if(throttle > 100) action = "Forward";
+            if(throttle < 100) action = "Reverse";
+            if(steer < 100) action = "Left";
+            if(steer > 100) action = "Right";
+            document.getElementById('log').innerText = "Cmd: " + action + " (T:" + throttle + " S:" + steer + ")";
+
+            try {
+                // Send 2 Bytes: [Throttle, Steer]
+                let data = new Uint8Array([throttle, steer]);
+                await bleChar.writeValue(data);
+            } catch(e) {
+                console.log("Send Error", e);
+            }
+        }
+
+        // Helper to send STOP command (100, 100)
+        function stop() {
+            sendCommand(100, 100);
+        }
+    </script>
+
+</body>
+</html>
