@@ -34,7 +34,8 @@
             background: #444; box-shadow: 0 6px #222;
             cursor: pointer;
             display: flex; justify-content: center; align-items: center;
-            touch-action: manipulation; /* Improves touch response */
+            /* CRITICAL FIX: prevents scrolling when dragging finger off button */
+            touch-action: none; 
         }
 
         /* BUTTON COLORS & PRESS EFFECT */
@@ -63,26 +64,34 @@
 
     <div class="control-grid">
         <button class="btn up" 
-            ontouchstart="sendCommand(140, 100)" onmousedown="sendCommand(140, 100)" 
-            ontouchend="stop()" onmouseup="stop()">
+            onpointerdown="sendCommand(140, 100)" 
+            onpointerup="stop()" 
+            onpointerleave="stop()"
+            onpointercancel="stop()">
             ▲
         </button>
 
         <button class="btn left" 
-            ontouchstart="sendCommand(100, 50)" onmousedown="sendCommand(100, 50)" 
-            ontouchend="stop()" onmouseup="stop()">
+            onpointerdown="sendCommand(100, 50)" 
+            onpointerup="stop()" 
+            onpointerleave="stop()"
+            onpointercancel="stop()">
             ◀
         </button>
 
         <button class="btn down" 
-            ontouchstart="sendCommand(60, 100)" onmousedown="sendCommand(60, 100)" 
-            ontouchend="stop()" onmouseup="stop()">
+            onpointerdown="sendCommand(60, 100)" 
+            onpointerup="stop()" 
+            onpointerleave="stop()"
+            onpointercancel="stop()">
             ▼
         </button>
 
         <button class="btn right" 
-            ontouchstart="sendCommand(100, 150)" onmousedown="sendCommand(100, 150)" 
-            ontouchend="stop()" onmouseup="stop()">
+            onpointerdown="sendCommand(100, 150)" 
+            onpointerup="stop()" 
+            onpointerleave="stop()"
+            onpointercancel="stop()">
             ▶
         </button>
     </div>
@@ -91,12 +100,15 @@
 
     <script>
         // --- CONFIGURATION ---
-        // Must match ESP32 Code
         const serviceUUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
         const charUUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
         let bleDevice, bleServer, bleService, bleChar;
         let isConnected = false;
+        
+        // --- QUEUE VARIABLES (Fixes the Bluetooth Traffic Jam) ---
+        let isWriting = false;
+        let pendingData = null;
 
         async function connectBLE() {
             try {
@@ -135,8 +147,8 @@
             el.style.color = color;
         }
 
-        // --- COMMAND SENDER ---
-        async function sendCommand(throttle, steer) {
+        // --- COMMAND SENDER (With Queueing) ---
+        function sendCommand(throttle, steer) {
             if (!bleChar || !isConnected) return;
 
             // Update Log
@@ -147,12 +159,35 @@
             if(steer > 100) action = "Right";
             document.getElementById('log').innerText = "Cmd: " + action + " (T:" + throttle + " S:" + steer + ")";
 
+            // Queue the data instead of sending blindly
+            pendingData = new Uint8Array([throttle, steer]);
+            processQueue();
+        }
+
+        // This function safely sends data without jamming the Bluetooth radio
+        async function processQueue() {
+            if (isWriting || !pendingData || !bleChar || !isConnected) return;
+
+            isWriting = true;
+            let dataToSend = pendingData;
+            pendingData = null; // Clear queue so we only send the freshest data
+
             try {
-                // Send 2 Bytes: [Throttle, Steer]
-                let data = new Uint8Array([throttle, steer]);
-                await bleChar.writeValue(data);
+                // Use 'writeValueWithoutResponse' if available (much faster for joysticks)
+                if (bleChar.writeValueWithoutResponse) {
+                    await bleChar.writeValueWithoutResponse(dataToSend);
+                } else {
+                    await bleChar.writeValue(dataToSend);
+                }
             } catch(e) {
-                console.log("Send Error", e);
+                console.log("Send Error:", e);
+            }
+
+            isWriting = false;
+
+            // If a Stop command came in while we were busy sending Go, process it immediately
+            if (pendingData) {
+                setTimeout(processQueue, 10);
             }
         }
 
