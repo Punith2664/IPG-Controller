@@ -1,147 +1,273 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>Roadbox Controller</title>
     <style>
-        body { 
-            background-color: #222; color: white; font-family: 'Arial', sans-serif; 
-            margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center;
-            user-select: none; -webkit-user-select: none; 
+        * { box-sizing: border-box; }
+
+        body {
+            background-color: #1a1a2e;
+            color: white;
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            user-select: none;
+            -webkit-user-select: none;
         }
-        h2 { margin-top: 20px; }
-        #status { color: #888; font-size: 14px; margin-bottom: 20px; }
-        
+
+        h2 { margin-top: 20px; font-size: 22px; letter-spacing: 2px; }
+
+        #status {
+            font-size: 13px;
+            margin: 6px 0 14px;
+            padding: 4px 14px;
+            border-radius: 20px;
+            background: #333;
+        }
+        #status.connected    { background: #1a4a1a; color: #4cff4c; }
+        #status.disconnected { background: #4a1a1a; color: #ff6060; }
+        #status.scanning     { background: #1a3a4a; color: #60c0ff; }
+
         #connectBtn {
-            padding: 12px 25px; font-size: 16px; border-radius: 8px; border: none;
-            background: #007bff; color: white; font-weight: bold; cursor: pointer;
+            padding: 12px 28px;
+            font-size: 15px;
+            border-radius: 10px;
+            border: none;
+            background: #0077cc;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 10px;
         }
-        
-        .control-grid {
+        #connectBtn:hover { background: #0099ff; }
+
+        /* ── D-Pad grid ── */
+        .dpad {
             display: grid;
-            grid-template-columns: 100px 100px 100px;
-            grid-template-rows: 100px 100px;
-            gap: 15px;
-            margin-top: 50px;
+            grid-template-columns: 110px 110px 110px;
+            grid-template-rows: 110px 110px;
+            gap: 12px;
+            margin-top: 40px;
         }
 
         .btn {
-            width: 100px; height: 100px;
-            border-radius: 15px; border: none;
-            font-size: 24px; font-weight: bold; color: white;
-            background: #444; box-shadow: 0 6px #222;
+            width: 110px; height: 110px;
+            border-radius: 16px;
+            border: 2px solid rgba(255,255,255,0.1);
+            font-size: 28px;
+            color: white;
+            background: #2d2d44;
+            box-shadow: 0 7px #111;
             cursor: pointer;
-            display: flex; justify-content: center; align-items: center;
-            touch-action: none; /* Crucial: Stops the screen from scrolling when pressing */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 4px;
+            touch-action: none;   /* prevent scroll-on-touch */
+            transition: transform 0.05s, box-shadow 0.05s;
         }
+        .btn span.label { font-size: 10px; color: rgba(255,255,255,0.5); }
 
         .btn:active, .btn.pressed {
-            box-shadow: 0 2px #222;
-            transform: translateY(4px);
-            background-color: #555;
+            box-shadow: 0 2px #111;
+            transform: translateY(5px);
+            background: #3d3d5c;
         }
 
-        .up { background: #28a745; grid-column: 2; grid-row: 1; } 
-        .down { background: #dc3545; grid-column: 2; grid-row: 2; } 
-        .left { background: #ffc107; color: black; grid-column: 1; grid-row: 2; } 
-        .right { background: #ffc107; color: black; grid-column: 3; grid-row: 2; } 
+        .up    { background: #1a5c2a; grid-column: 2; grid-row: 1; }
+        .down  { background: #7a1a1a; grid-column: 2; grid-row: 2; }
+        .left  { background: #5c4a00; grid-column: 1; grid-row: 2; }
+        .right { background: #5c4a00; grid-column: 3; grid-row: 2; }
 
         #log {
-            margin-top: 30px; font-family: monospace; color: #0f0; font-size: 12px;
+            margin-top: 28px;
+            font-family: monospace;
+            font-size: 13px;
+            color: #aaa;
+            background: #111;
+            padding: 8px 20px;
+            border-radius: 8px;
+            min-width: 280px;
+            text-align: center;
+        }
+
+        #https-warning {
+            display: none;
+            color: #ff6060;
+            font-size: 12px;
+            margin-top: 10px;
+            background: #4a1a1a;
+            padding: 8px 16px;
+            border-radius: 8px;
+            max-width: 320px;
+            text-align: center;
         }
     </style>
 </head>
 <body>
 
-    <h2>Mission Roadbox</h2>
-    <div id="status">Disconnected</div>
+    <h2>🚗 Mission Roadbox</h2>
+    <div id="status" class="disconnected">Disconnected</div>
     <button id="connectBtn" onclick="connectBLE()">CONNECT ROBOT</button>
-
-    <div class="control-grid">
-        <button class="btn up" 
-            onpointerdown="sendCommand(140, 100)" 
-            onpointerup="stop()" onpointerleave="stop()">▲</button>
-
-        <button class="btn left" 
-            onpointerdown="sendCommand(100, 50)" 
-            onpointerup="stop()" onpointerleave="stop()">◀</button>
-
-        <button class="btn down" 
-            onpointerdown="sendCommand(60, 100)" 
-            onpointerup="stop()" onpointerleave="stop()">▼</button>
-
-        <button class="btn right" 
-            onpointerdown="sendCommand(100, 150)" 
-            onpointerup="stop()" onpointerleave="stop()">▶</button>
+    <div id="https-warning">
+        ⚠️ Web Bluetooth requires HTTPS or localhost.<br>
+        Serving over plain HTTP will not work.
     </div>
 
-    <div id="log">Last Cmd: Stop</div>
+    <div class="dpad">
+        <!-- Forward: throttle=160, steer=100 (neutral steer) -->
+        <button class="btn up"
+            onpointerdown="press(this, 160, 100)"
+            onpointerup="release(this)"
+            onpointerleave="release(this)"
+            onpointercancel="release(this)">
+            ▲ <span class="label">FORWARD</span>
+        </button>
+
+        <!-- Left: throttle=100 (neutral), steer=40 -->
+        <button class="btn left"
+            onpointerdown="press(this, 100, 40)"
+            onpointerup="release(this)"
+            onpointerleave="release(this)"
+            onpointercancel="release(this)">
+            ◀ <span class="label">LEFT</span>
+        </button>
+
+        <!-- Reverse: throttle=40, steer=100 (neutral steer) -->
+        <button class="btn down"
+            onpointerdown="press(this, 40, 100)"
+            onpointerup="release(this)"
+            onpointerleave="release(this)"
+            onpointercancel="release(this)">
+            ▼ <span class="label">REVERSE</span>
+        </button>
+
+        <!-- Right: throttle=100 (neutral), steer=160 -->
+        <button class="btn right"
+            onpointerdown="press(this, 100, 160)"
+            onpointerup="release(this)"
+            onpointerleave="release(this)"
+            onpointercancel="release(this)">
+            ▶ <span class="label">RIGHT</span>
+        </button>
+    </div>
+
+    <div id="log">Last: Stop (T:100 S:100)</div>
 
     <script>
-        const serviceUUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-        const charUUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+        // ── Must match ESP32 sketch exactly ──────────────────────────────────
+        const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+        const CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-        let bleDevice, bleServer, bleService, bleChar;
+        let bleChar = null;
         let isConnected = false;
 
+        // ── HTTPS check on load ───────────────────────────────────────────────
+        window.addEventListener('load', () => {
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+                document.getElementById('https-warning').style.display = 'block';
+            }
+            if (!navigator.bluetooth) {
+                updateStatus('Web Bluetooth not supported in this browser', 'disconnected');
+                document.getElementById('connectBtn').disabled = true;
+            }
+        });
+
+        // ── BLE Connect ───────────────────────────────────────────────────────
         async function connectBLE() {
             try {
-                updateStatus("Scanning...");
-                bleDevice = await navigator.bluetooth.requestDevice({
+                updateStatus('Scanning...', 'scanning');
+
+                const device = await navigator.bluetooth.requestDevice({
                     filters: [{ name: 'Roadbox_Controller' }],
-                    optionalServices: [serviceUUID]
+                    optionalServices: [SERVICE_UUID]
                 });
 
-                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
-                
-                updateStatus("Connecting...");
-                bleServer = await bleDevice.gatt.connect();
-                bleService = await bleServer.getPrimaryService(serviceUUID);
-                bleChar = await bleService.getCharacteristic(charUUID);
+                device.addEventListener('gattserverdisconnected', () => {
+                    isConnected = false;
+                    bleChar = null;
+                    updateStatus('Disconnected', 'disconnected');
+                    document.getElementById('connectBtn').style.display = 'inline-block';
+                    updateLog('Stop', 100, 100);
+                });
+
+                updateStatus('Connecting...', 'scanning');
+                const server  = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                bleChar       = await service.getCharacteristic(CHAR_UUID);
 
                 isConnected = true;
-                updateStatus("CONNECTED", "green");
+                updateStatus('CONNECTED ✓', 'connected');
                 document.getElementById('connectBtn').style.display = 'none';
 
-            } catch (error) {
-                console.log(error);
-                updateStatus("Error: " + error, "red");
+                // Send stop immediately on connect to confirm link is alive
+                await sendCommand(100, 100);
+
+            } catch (err) {
+                console.error(err);
+                updateStatus('Error: ' + err.message, 'disconnected');
             }
         }
 
-        function onDisconnected() {
-            isConnected = false;
-            updateStatus("Disconnected", "red");
-            document.getElementById('connectBtn').style.display = 'block';
+        // ── Button handlers ───────────────────────────────────────────────────
+        function press(el, throttle, steer) {
+            el.classList.add('pressed');
+            el.setPointerCapture(event.pointerId);  // keep events even if pointer moves off
+            sendCommand(throttle, steer);
         }
 
-        function updateStatus(text, color="gray") {
-            const el = document.getElementById('status');
-            el.innerText = text;
-            el.style.color = color;
+        function release(el) {
+            el.classList.remove('pressed');
+            sendCommand(100, 100);   // STOP
         }
 
-        // YOUR ORIGINAL SEND COMMAND
+        // ── Send 2-byte packet via BLE ────────────────────────────────────────
+        // FIX: use writeValueWithoutResponse() — characteristic is WRITE_NR
         async function sendCommand(throttle, steer) {
             if (!bleChar || !isConnected) return;
 
-            let action = "Stop";
-            if(throttle > 100) action = "Forward";
-            if(throttle < 100) action = "Reverse";
-            if(steer < 100) action = "Left";
-            if(steer > 100) action = "Right";
-            document.getElementById('log').innerText = "Cmd: " + action + " (T:" + throttle + " S:" + steer + ")";
+            const label = getLabel(throttle, steer);
+            updateLog(label, throttle, steer);
 
             try {
-                let data = new Uint8Array([throttle, steer]);
-                await bleChar.writeValue(data);
-            } catch(e) {
-                console.log("Send Error", e);
+                const data = new Uint8Array([throttle, steer]);
+
+                // writeValueWithoutResponse is correct for PROPERTY_WRITE_NR
+                // Falls back to writeValue if browser doesn't support it
+                if (typeof bleChar.writeValueWithoutResponse === 'function') {
+                    await bleChar.writeValueWithoutResponse(data);
+                } else {
+                    await bleChar.writeValue(data);
+                }
+            } catch (e) {
+                console.warn('BLE send error:', e);
+                // Don't spam on every button press if temporarily busy
             }
         }
 
-        function stop() {
-            sendCommand(100, 100);
+        function getLabel(t, s) {
+            if (t > 100 && s === 100) return 'Forward';
+            if (t < 100 && s === 100) return 'Reverse';
+            if (t === 100 && s < 100) return 'Left';
+            if (t === 100 && s > 100) return 'Right';
+            if (t === 100 && s === 100) return 'Stop';
+            return 'Move';
+        }
+
+        function updateLog(label, t, s) {
+            document.getElementById('log').innerText =
+                `Last: ${label}  (T:${t}  S:${s})`;
+        }
+
+        function updateStatus(text, cls) {
+            const el = document.getElementById('status');
+            el.innerText = text;
+            el.className = cls;
         }
     </script>
 </body>
