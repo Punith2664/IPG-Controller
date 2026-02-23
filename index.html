@@ -9,7 +9,7 @@
         body {
             background-color: #1a1a2e;
             color: white;
-            font-family: 'Arial', sans-serif;
+            font-family: Arial, sans-serif;
             margin: 0;
             min-height: 100vh;
             display: flex;
@@ -45,7 +45,6 @@
         }
         #connectBtn:hover { background: #0099ff; }
 
-        /* ── D-Pad grid ── */
         .dpad {
             display: grid;
             grid-template-columns: 110px 110px 110px;
@@ -68,12 +67,13 @@
             justify-content: center;
             align-items: center;
             gap: 4px;
-            touch-action: none;   /* prevent scroll-on-touch */
+            touch-action: none;
             transition: transform 0.05s, box-shadow 0.05s;
+            -webkit-tap-highlight-color: transparent;
         }
         .btn span.label { font-size: 10px; color: rgba(255,255,255,0.5); }
 
-        .btn:active, .btn.pressed {
+        .btn.pressed {
             box-shadow: 0 2px #111;
             transform: translateY(5px);
             background: #3d3d5c;
@@ -115,12 +115,10 @@
     <div id="status" class="disconnected">Disconnected</div>
     <button id="connectBtn" onclick="connectBLE()">CONNECT ROBOT</button>
     <div id="https-warning">
-        ⚠️ Web Bluetooth requires HTTPS or localhost.<br>
-        Serving over plain HTTP will not work.
+        ⚠️ Web Bluetooth requires HTTPS or localhost.
     </div>
 
     <div class="dpad">
-        <!-- Forward: throttle=160, steer=100 (neutral steer) -->
         <button class="btn up"
             onpointerdown="press(this, 160, 100)"
             onpointerup="release(this)"
@@ -129,7 +127,6 @@
             ▲ <span class="label">FORWARD</span>
         </button>
 
-        <!-- Left: throttle=100 (neutral), steer=40 -->
         <button class="btn left"
             onpointerdown="press(this, 100, 40)"
             onpointerup="release(this)"
@@ -138,7 +135,6 @@
             ◀ <span class="label">LEFT</span>
         </button>
 
-        <!-- Reverse: throttle=40, steer=100 (neutral steer) -->
         <button class="btn down"
             onpointerdown="press(this, 40, 100)"
             onpointerup="release(this)"
@@ -147,7 +143,6 @@
             ▼ <span class="label">REVERSE</span>
         </button>
 
-        <!-- Right: throttle=100 (neutral), steer=160 -->
         <button class="btn right"
             onpointerdown="press(this, 100, 160)"
             onpointerup="release(this)"
@@ -157,32 +152,37 @@
         </button>
     </div>
 
-    <div id="log">Last: Stop (T:100 S:100)</div>
+    <div id="log">Last: Stop</div>
 
     <script>
-        // ── Must match ESP32 sketch exactly ──────────────────────────────────
         const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
         const CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-        let bleChar = null;
-        let isConnected = false;
+        // ── KEY FIX: repeat interval must be less than STM32 watchdog (500ms)
+        // Send every 200ms while button is held so watchdog never triggers
+        const REPEAT_INTERVAL_MS = 200;
 
-        // ── HTTPS check on load ───────────────────────────────────────────────
+        let bleChar      = null;
+        let isConnected  = false;
+        let repeatTimer  = null;   // holds the setInterval reference
+        let activeBtn    = null;   // currently pressed button element
+        let isSending    = false;  // prevents overlapping async sends
+
+        // ── HTTPS check ──────────────────────────────────────────────────────
         window.addEventListener('load', () => {
             if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
                 document.getElementById('https-warning').style.display = 'block';
             }
             if (!navigator.bluetooth) {
-                updateStatus('Web Bluetooth not supported in this browser', 'disconnected');
+                updateStatus('Web Bluetooth not supported', 'disconnected');
                 document.getElementById('connectBtn').disabled = true;
             }
         });
 
-        // ── BLE Connect ───────────────────────────────────────────────────────
+        // ── BLE Connect ──────────────────────────────────────────────────────
         async function connectBLE() {
             try {
                 updateStatus('Scanning...', 'scanning');
-
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [{ name: 'Roadbox_Controller' }],
                     optionalServices: [SERVICE_UUID]
@@ -191,6 +191,7 @@
                 device.addEventListener('gattserverdisconnected', () => {
                     isConnected = false;
                     bleChar = null;
+                    stopRepeat();
                     updateStatus('Disconnected', 'disconnected');
                     document.getElementById('connectBtn').style.display = 'inline-block';
                     updateLog('Stop', 100, 100);
@@ -205,7 +206,7 @@
                 updateStatus('CONNECTED ✓', 'connected');
                 document.getElementById('connectBtn').style.display = 'none';
 
-                // Send stop immediately on connect to confirm link is alive
+                // Confirm link with a stop packet
                 await sendCommand(100, 100);
 
             } catch (err) {
@@ -214,39 +215,72 @@
             }
         }
 
-        // ── Button handlers ───────────────────────────────────────────────────
+        // ── Button press: send immediately + start repeat timer ──────────────
         function press(el, throttle, steer) {
+            // If another button is already held, release it first
+            if (activeBtn && activeBtn !== el) {
+                activeBtn.classList.remove('pressed');
+            }
+
+            activeBtn = el;
             el.classList.add('pressed');
-            el.setPointerCapture(event.pointerId);  // keep events even if pointer moves off
+            el.setPointerCapture(event.pointerId);
+
+            // Send immediately so there's no delay on first press
             sendCommand(throttle, steer);
+
+            // Clear any existing timer
+            stopRepeat();
+
+            // FIX: Keep sending every REPEAT_INTERVAL_MS while button is held.
+            // Without this the STM32 watchdog fires after 500ms and stops motors.
+            repeatTimer = setInterval(() => {
+                sendCommand(throttle, steer);
+            }, REPEAT_INTERVAL_MS);
         }
 
+        // ── Button release: stop repeat + send stop ──────────────────────────
         function release(el) {
+            if (activeBtn !== el) return;  // ignore spurious events
+
             el.classList.remove('pressed');
+            activeBtn = null;
+            stopRepeat();
             sendCommand(100, 100);   // STOP
         }
 
-        // ── Send 2-byte packet via BLE ────────────────────────────────────────
-        // FIX: use writeValueWithoutResponse() — characteristic is WRITE_NR
+        // ── Clear the repeat timer ────────────────────────────────────────────
+        function stopRepeat() {
+            if (repeatTimer !== null) {
+                clearInterval(repeatTimer);
+                repeatTimer = null;
+            }
+        }
+
+        // ── Send 2-byte BLE packet ────────────────────────────────────────────
         async function sendCommand(throttle, steer) {
             if (!bleChar || !isConnected) return;
 
-            const label = getLabel(throttle, steer);
-            updateLog(label, throttle, steer);
+            // Skip if previous send hasn't finished (BLE is slower than interval)
+            if (isSending) return;
+            isSending = true;
+
+            updateLog(getLabel(throttle, steer), throttle, steer);
 
             try {
                 const data = new Uint8Array([throttle, steer]);
-
-                // writeValueWithoutResponse is correct for PROPERTY_WRITE_NR
-                // Falls back to writeValue if browser doesn't support it
                 if (typeof bleChar.writeValueWithoutResponse === 'function') {
                     await bleChar.writeValueWithoutResponse(data);
                 } else {
                     await bleChar.writeValue(data);
                 }
             } catch (e) {
-                console.warn('BLE send error:', e);
-                // Don't spam on every button press if temporarily busy
+                // Don't log every failure during rapid repeat
+                if (e.name !== 'NetworkError') {
+                    console.warn('BLE send error:', e);
+                }
+            } finally {
+                isSending = false;
             }
         }
 
